@@ -2,7 +2,7 @@
 
 from django.conf import settings
 from django.http import HttpResponse
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from getpaid.models import Payment
@@ -42,6 +42,13 @@ def close(request):
         else:
             return HttpResponse('ACEPTADO')
 
+    # Check if 'orden de compra' was already paid in another Payment before
+    order_id = int(request.POST['TBK_ORDEN_COMPRA'])
+    print "Orden de compra: %s" % order_id
+    previous_payments = Payment.objects.filter(order__id=order_id, status='paid', backend='getpaid.backends.webpay')
+    if previous_payments:
+        return HttpResponse('RECHAZADO')
+
     try:
         payment = Payment.objects.get(pk=payment_pk,
                                       status='in_progress',
@@ -67,8 +74,11 @@ def close(request):
 @require_POST
 @csrf_exempt
 def success(request):
-    payment_pk = request.POST['TBK_ID_SESION']
-    payment = Payment.objects.get(pk=payment_pk)
+    payment_pk = request.POST.get('TBK_ID_SESION')
+    try:
+        payment = Payment.objects.get(pk=payment_pk, paid_on__isnull=False)
+    except (Payment.DoesNotExist, ValueError):
+        return redirect('getpaid-webpay-failure')
     order = payment.order
     params = payment.journalentry.params
 
@@ -99,8 +109,7 @@ def success(request):
     return render(request, 'getpaid/success.html', context)
 
 
-@require_POST
 @csrf_exempt
 def failure(request):
-    context = {'order_id': request.POST['TBK_ORDEN_COMPRA']}
+    context = {'order_id': request.POST.get('TBK_ORDEN_COMPRA')}
     return render(request, 'getpaid/failure.html', context)
